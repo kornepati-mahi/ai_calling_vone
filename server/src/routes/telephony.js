@@ -1190,7 +1190,7 @@ router.post('/recording-callback', express.urlencoded({ extended: true }), expre
 
   console.log('[recording] Callback received:', { identifiers, recordingSid, recordingUrl, recordingStatus, duration });
 
-  // Acknowledge first: the 3-second budget must not be spent on a download.
+  // Acknowledge first: the 3-second budget must not be spent on any download.
   res.type('text/xml');
   res.send('<Response></Response>');
 
@@ -1205,50 +1205,25 @@ router.post('/recording-callback', express.urlencoded({ extended: true }), expre
   const carrierUrl = normalizeRecordingUrl(recordingUrl);
   const durSec = parseInt(duration, 10) || 0;
 
-  // Record the carrier URL immediately so the audio is never lost even if the
-  // authenticated download below fails.
+  // Persist the carrier URL immediately — this is the authoritative reference
+  // even if further processing below fails.
   await update('UPDATE calls SET recording_url = ? WHERE id = ?', [carrierUrl, call.id]);
   await recordCallRecording(call.id, carrierUrl, durSec);
 
-  // VoBiz recording_url is NOT a public link: the documented download requires
-  // X-Auth-ID + X-Auth-Token. Mirroring it to disk lets the browser play it.
-  if (/vobiz\.ai/i.test(carrierUrl)) {
-    try {
-      const { getTelephonyProvider } = require('../providers');
-      const provider = getTelephonyProvider('vobiz');
-      if (typeof provider.downloadRecording === 'function') {
-        const fileBuf = await provider.downloadRecording(carrierUrl);
-        if (fileBuf && fileBuf.length) {
-          const fs = require('fs');
-          const path = require('path');
-          const RECORDINGS_DIR = path.join(__dirname, '..', '..', 'public', 'recordings');
-          if (!fs.existsSync(RECORDINGS_DIR)) fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
-          const safeCall = String(call.call_id || call.id).replace(/[^a-zA-Z0-9_-]/g, '');
-          const localName = `${safeCall}_vobiz.mp3`;
-          fs.writeFileSync(path.join(RECORDINGS_DIR, localName), fileBuf);
-          const localUrl = `/api/recordings/${localName}`;
-          await update('UPDATE calls SET recording_url = ? WHERE id = ?', [localUrl, call.id]);
-          await recordCallRecording(call.id, localUrl, durSec);
-          console.log(`[recording] VoBiz recording cached locally for call ${call.id}: ${localUrl} (${fileBuf.length}B)`);
-
-          const realtime = require('../services/realtime');
-          realtime.emit(call.organization_id, 'call.recording', {
-            callId: call.call_id, callDbId: call.id, recordingUrl: localUrl, duration: durSec,
-          });
-          return;
-        }
-      }
-    } catch (dlErr) {
-      // Keep the carrier URL: it is still a valid reference for the audit trail.
-      console.warn('[recording] VoBiz recording download failed, keeping the carrier URL:', dlErr.message);
-    }
-  }
+  // VoBiz recording_url requires X-Auth-ID + X-Auth-Token — it is NOT a public
+  // link. On cloud hosts (Render, Railway, etc.) the filesystem is ephemeral, so
+  // writing the MP3 to disk breaks on every deploy/restart.
+  //
+  // The authenticated recording proxy at /api/conversations/:id/recording
+  // (Case 3 in conversations.js) already fetches VoBiz URLs server-side using
+  // VOBIZ_AUTH_ID / VOBIZ_AUTH_TOKEN and streams the audio to the browser,
+  // so keeping the carrier URL in the DB is sufficient — no local file needed.
+  console.log(`[recording] Saved recording URL for call ${call.id}: ${carrierUrl}`);
 
   const realtime = require('../services/realtime');
   realtime.emit(call.organization_id, 'call.recording', {
     callId: call.call_id, callDbId: call.id, recordingUrl: carrierUrl, duration: durSec,
   });
-  console.log('[recording] Saved recording URL to call id:', call.id, '->', carrierUrl);
 }));
 
 module.exports = router;
