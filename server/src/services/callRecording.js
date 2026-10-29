@@ -109,22 +109,39 @@ function mixTracksToWav(tracks) {
  * Persist a WAV to public/recordings and return the public URL path.
  * @returns {string|null} e.g. "/api/recordings/call_x_1712.wav"
  */
-function saveRecordingWav(callId, wavBuffer) {
+async function saveRecordingWav(callId, wavBuffer) {
   if (!Buffer.isBuffer(wavBuffer) || wavBuffer.length <= 44) return null;
+  const safeName = String(callId || 'call').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 60) || 'call';
+  const fileName = `${safeName}_${Date.now()}.wav`;
+
+  let localPath = null;
   try {
     if (!fs.existsSync(RECORDINGS_DIR)) {
       fs.mkdirSync(RECORDINGS_DIR, { recursive: true });
     }
-    // Call ids are generated hex strings, but never trust carrier-supplied ids
-    // to be filesystem safe.
-    const safeName = String(callId || 'call').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 60) || 'call';
-    const fileName = `${safeName}_${Date.now()}.wav`;
     fs.writeFileSync(path.join(RECORDINGS_DIR, fileName), wavBuffer);
-    return `/api/recordings/${fileName}`;
+    localPath = `/api/recordings/${fileName}`;
   } catch (err) {
     console.warn('[callRecording] Failed to write recording to disk:', err.message);
-    return null;
   }
+
+  // Persist to InsForge storage so audio survives Render redeployments
+  try {
+    const { getInsforge } = require('../config/insforge');
+    const insforge = await getInsforge();
+    if (insforge) {
+      const blob = new Blob([wavBuffer], { type: 'audio/wav' });
+      const uploadRes = await insforge.storage.from('recordings').upload(fileName, blob);
+      if (uploadRes?.data?.url) {
+        console.log(`[callRecording] Uploaded recording ${fileName} to InsForge storage:`, uploadRes.data.url);
+        return uploadRes.data.url;
+      }
+    }
+  } catch (err) {
+    console.warn('[callRecording] InsForge storage upload error:', err.message);
+  }
+
+  return localPath;
 }
 
 function recordingFilePath(fileName) {

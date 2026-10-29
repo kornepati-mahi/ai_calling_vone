@@ -21,7 +21,7 @@ import { Select } from '@/components/ui/select';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/components/ui/toast';
-import { api, ApiClientError } from '@/lib/api';
+import { api, ApiClientError, getApiBase } from '@/lib/api';
 import { useEmployees } from '@/hooks/queries';
 import { useAuth } from '@/context/AuthContext';
 import { useRealtimeEvent } from '@/hooks/useRealtime';
@@ -620,7 +620,12 @@ export function InstantCallPage() {
                     <p className="text-[11px] text-muted-foreground">Recording</p>
                     <p className="mt-0.5 text-sm font-medium">
                       {result.recordingUrl ? (
-                        <a className="text-primary underline" href={result.recordingUrl} target="_blank" rel="noreferrer">
+                        <a
+                          className="text-primary underline"
+                          href={result.recordingUrl.startsWith('http') ? result.recordingUrl : `${getApiBase()}${result.recordingUrl}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
                           Listen
                         </a>
                       ) : (

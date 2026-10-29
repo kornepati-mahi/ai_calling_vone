@@ -1210,20 +1210,57 @@ router.post('/recording-callback', express.urlencoded({ extended: true }), expre
   await update('UPDATE calls SET recording_url = ? WHERE id = ?', [carrierUrl, call.id]);
   await recordCallRecording(call.id, carrierUrl, durSec);
 
-  // VoBiz recording_url requires X-Auth-ID + X-Auth-Token — it is NOT a public
-  // link. On cloud hosts (Render, Railway, etc.) the filesystem is ephemeral, so
-  // writing the MP3 to disk breaks on every deploy/restart.
-  //
-  // The authenticated recording proxy at /api/conversations/:id/recording
-  // (Case 3 in conversations.js) already fetches VoBiz URLs server-side using
-  // VOBIZ_AUTH_ID / VOBIZ_AUTH_TOKEN and streams the audio to the browser,
-  // so keeping the carrier URL in the DB is sufficient — no local file needed.
   console.log(`[recording] Saved recording URL for call ${call.id}: ${carrierUrl}`);
 
   const realtime = require('../services/realtime');
   realtime.emit(call.organization_id, 'call.recording', {
     callId: call.call_id, callDbId: call.id, recordingUrl: carrierUrl, duration: durSec,
   });
+
+  // Background mirror to InsForge persistent storage so audio never expires and is publicly playable
+  (async () => {
+    try {
+      if (/vobiz\.ai/i.test(carrierUrl) && process.env.VOBIZ_AUTH_ID && process.env.VOBIZ_AUTH_TOKEN) {
+        const parsed = new URL(carrierUrl);
+        const https = require('https');
+        const opts = {
+          hostname: parsed.hostname,
+          port: parsed.port || 443,
+          path: parsed.pathname + parsed.search,
+          headers: {
+            'X-Auth-ID': process.env.VOBIZ_AUTH_ID,
+            'X-Auth-Token': process.env.VOBIZ_AUTH_TOKEN,
+          },
+        };
+        const chunks = [];
+        await new Promise((resolve, reject) => {
+          https.get(opts, (res) => {
+            if (res.statusCode >= 400) return reject(new Error(`VoBiz download failed: ${res.statusCode}`));
+            res.on('data', (c) => chunks.push(c));
+            res.on('end', resolve);
+            res.on('error', reject);
+          }).on('error', reject);
+        });
+        const buf = Buffer.concat(chunks);
+        if (buf.length > 0) {
+          const { getInsforge } = require('../config/insforge');
+          const insforge = await getInsforge();
+          if (insforge) {
+            const fileName = `${call.call_id}_vobiz.mp3`;
+            const blob = new Blob([buf], { type: 'audio/mpeg' });
+            const uploadRes = await insforge.storage.from('recordings').upload(fileName, blob);
+            if (uploadRes?.data?.url) {
+              await update('UPDATE calls SET recording_url = ? WHERE id = ?', [uploadRes.data.url, call.id]);
+              await recordCallRecording(call.id, uploadRes.data.url, durSec);
+              console.log(`[recording] Mirrored VoBiz audio to InsForge storage for call ${call.id}: ${uploadRes.data.url}`);
+            }
+          }
+        }
+      }
+    } catch (mirrorErr) {
+      console.warn('[recording] Background InsForge mirror failed (carrier URL remains active):', mirrorErr.message);
+    }
+  })();
 }));
 
 module.exports = router;

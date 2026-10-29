@@ -80,7 +80,7 @@ router.get('/:id/recording', asyncHandler(async (req, res) => {
   if (/vobiz\.ai/i.test(parsedUrl.hostname)) {
     if (process.env.VOBIZ_AUTH_ID) authHeaders['X-Auth-ID'] = process.env.VOBIZ_AUTH_ID;
     if (process.env.VOBIZ_AUTH_TOKEN) authHeaders['X-Auth-Token'] = process.env.VOBIZ_AUTH_TOKEN;
-  } else {
+  } else if (/twilio\.com/i.test(parsedUrl.hostname)) {
     const accountSid = process.env.TWILIO_ACCOUNT_SID || '';
     const authToken  = process.env.TWILIO_AUTH_TOKEN  || '';
     if (accountSid && authToken) {
@@ -187,7 +187,7 @@ router.get('/', asyncHandler(async (req, res) => {
     r.recording_url
       ? {
           ...r,
-          recording_proxy_url: /^\/api\/recordings\//.test(r.recording_url)
+          recording_proxy_url: /^https?:\/\//i.test(r.recording_url) && !/vobiz\.ai|twilio\.com/i.test(r.recording_url)
             ? r.recording_url
             : `/api/conversations/${r.call_id}/recording`,
         }
@@ -225,7 +225,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   // Attach a proxy URL for the browser audio player (no auth needed)
   const finalCall = { ...call, transcript, analysis: outcome[0] || null, recordings };
   if (finalCall.recording_url) {
-    finalCall.recording_proxy_url = /^\/api\/recordings\//.test(finalCall.recording_url)
+    finalCall.recording_proxy_url = /^https?:\/\//i.test(finalCall.recording_url) && !/vobiz\.ai|twilio\.com/i.test(finalCall.recording_url)
       ? finalCall.recording_url
       : `/api/conversations/${req.params.id}/recording`;
   }

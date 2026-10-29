@@ -1442,7 +1442,7 @@ ${leadPurpose ? `- Focus the conversation directly on their inquiry: "${leadPurp
         return null;
       }
 
-      const url = saveRecordingWav(this.callId, mixed.wav);
+      const url = await saveRecordingWav(this.callId, mixed.wav);
       if (!url) return null;
 
       const recDuration = Math.max(

@@ -111,7 +111,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
   ]);
   const recUrl = call.recording_url || recordings?.[0]?.url || null;
   const recordingProxyUrl = recUrl
-    ? (/^\/api\/recordings\//.test(recUrl)
+    ? (/^https?:\/\//i.test(recUrl) && !/vobiz\.ai|twilio\.com/i.test(recUrl)
         ? recUrl
         : `/api/conversations/${call.call_id}/recording`)
     : null;

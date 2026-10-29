@@ -29,7 +29,7 @@ import { Dialog, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui
 import { useConversation, useConversations, useEmployees } from '@/hooks/queries';
 import { useRealtimeEvent } from '@/hooks/useRealtime';
 import { cn, formatDateTime, formatDuration, titleCase, formatPhoneDisplay } from '@/lib/utils';
-import { api, ApiClientError, fetchObjectUrl } from '@/lib/api';
+import { api, ApiClientError, fetchObjectUrl, getApiBase } from '@/lib/api';
 import { useToast } from '@/components/ui/toast';
 import type { Call, CallOutcome, TranscriptRow } from '@/types';
 
@@ -504,14 +504,8 @@ function RecordingPlayer({ call }: { call: Call }) {
     let objectUrl: string | null = null;
     setSrc(null);
 
-    // Local self-captured recordings (/api/recordings/...) are served publicly with full Range header support
-    if (directUrl && directUrl.startsWith('/api/recordings/')) {
-      setSrc(directUrl);
-      return () => { revoked = true; };
-    }
-
-    // Direct carrier URL with no proxy
-    if (!proxyPath && directUrl) {
+    // Direct public URL (InsForge cloud storage, CDN) that doesn't need carrier auth
+    if (directUrl && /^https?:\/\//i.test(directUrl) && !/vobiz\.ai|twilio\.com/i.test(directUrl)) {
       setSrc(directUrl);
       return () => { revoked = true; };
     }
@@ -530,8 +524,11 @@ function RecordingPlayer({ call }: { call: Call }) {
         setSrc(url);
       })
       .catch((err: unknown) => {
-        if (directUrl && !revoked) {
+        if (directUrl && /^https?:\/\//i.test(directUrl) && !revoked) {
           setSrc(directUrl);
+        } else if (directUrl && directUrl.startsWith('/api/') && !revoked) {
+          const apiBase = getApiBase();
+          setSrc(`${apiBase}${directUrl}`);
         } else if (!revoked) {
           toast.error('Recording unavailable', err instanceof Error ? err.message : undefined);
         }
